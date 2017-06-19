@@ -1,0 +1,86 @@
+## -------------------------------
+## Development + Testing Artifacts
+## -------------------------------
+files/
+*.trace
+*.trace.gz
+traces/
+*.jar
+!stream-generator.jar
+*.jar-ORIG
+*.swp
+*.log
+*.dot
+*.pdf
+*.arff
+*.pyc
+*.png
+*.csv
+*.ods
+*.markov
+*.hprof
+.~lock*
+junitvmwatcher*
+bin
+buildstring.txt
+debugoutput
+.depcache
+new_catalog.txt
+catalog.txt
+typescript
+plannerlog.txt
+keepalive
+obj
+conf-*.html
+.DS_Store
+SourceJars
+cmdlog
+logs/
+cpr.sh
+tpcdidata
+
+
+## -------------------------------
+## JNI Compiler Artifacts
+## -------------------------------
+src/ee/org_voltdb_jni_ExecutionEngine.h
+src/ee/org_voltdb_utils_DBBPool.h
+src/ee/org_voltdb_utils_ThreadUtils.h
+
+## -------------------------------
+## Catalog Compiler Artifacts
+## -------------------------------
+src/catgen/out
+
+## -------------------------------
+## Kate Swap Files
+## -------------------------------
+*.kate-swp
+.#kate-*
+
+## -------------------------------
+## Backup artifacts
+## -------------------------------
+~*
+*~
+
+## -------------------------------
+## Eclipse files
+## -------------------------------
+.wtpmodules
+.classpath
+.project
+.cproject
+.settings
+
+## -------------------------------
+## IntelliJ IDEA files
+## -------------------------------
+.idea
+*.iml
+
+## -------------------------------
+## BikerStream Benchmark uncompressed data files
+## -------------------------------
+src/benchmarks/edu/brown/benchmark/bikerstream/routes/*
+!src/benchmarks/edu/brown/benchmark/bikerstream/routes/*.gz

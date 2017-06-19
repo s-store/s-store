@@ -1,0 +1,211 @@
+/* This file is part of VoltDB.
+ * Copyright (C) 2008-2012 VoltDB Inc.
+ *
+ * VoltDB is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * VoltDB is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with VoltDB.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
+/* Copyright (C) 2017 by S-Store Project
+ * Brown University
+ * Massachusetts Institute of Technology
+ * Portland State University 
+ *
+ * Author: S-Store Team (sstore.cs.brown.edu)
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining
+ * a copy of this software and associated documentation files (the
+ * "Software"), to deal in the Software without restriction, including
+ * without limitation the rights to use, copy, modify, merge, publish,
+ * distribute, sublicense, and/or sell copies of the Software, and to
+ * permit persons to whom the Software is furnished to do so, subject to
+ * the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be
+ * included in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT
+ * IN NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR
+ * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+ * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
+ */
+
+#include "common/types.h"
+#include "common/ValueFactory.hpp"
+#include "storage/table.h"
+#include "storage/temptable.h"
+#include "storage/tablefactory.h"
+#include "stats/StatsSource.h"
+#include <vector>
+#include <string>
+#include <cassert>
+
+using namespace voltdb;
+using namespace std;
+
+vector<string> StatsSource::generateBaseStatsColumnNames() {
+    VOLT_DEBUG("StatsSource::generateBaseStatsColumnNames...");
+    vector<string> columnNames;
+    columnNames.push_back("TIMESTAMP");
+    columnNames.push_back("HOST_ID");
+    columnNames.push_back("HOSTNAME");
+    columnNames.push_back("SITE_ID");
+    columnNames.push_back("PARTITION_ID");
+    return columnNames;
+}
+
+void StatsSource::populateBaseSchema(vector<ValueType> &types, vector<int32_t> &columnLengths, vector<bool> &allowNull) {
+    //VOLT_DEBUG("StatsSource::populateBaseSchema...");
+
+    types.push_back(VALUE_TYPE_BIGINT); columnLengths.push_back(NValue::getTupleStorageSize(VALUE_TYPE_BIGINT)); allowNull.push_back(false);
+    types.push_back(VALUE_TYPE_BIGINT); columnLengths.push_back(NValue::getTupleStorageSize(VALUE_TYPE_BIGINT)); allowNull.push_back(false);
+    types.push_back(VALUE_TYPE_VARCHAR); columnLengths.push_back(4096); allowNull.push_back(false);
+    types.push_back(VALUE_TYPE_BIGINT); columnLengths.push_back(NValue::getTupleStorageSize(VALUE_TYPE_BIGINT)); allowNull.push_back(false);
+    types.push_back(VALUE_TYPE_BIGINT); columnLengths.push_back(NValue::getTupleStorageSize(VALUE_TYPE_BIGINT)); allowNull.push_back(false);
+}
+
+StatsSource::StatsSource()  : m_statsTable(NULL) {
+}
+
+/**
+ * Configure a StatsSource superclass for a set of statistics. Since this class is only used in the EE it can be assumed that
+ * it is part of an Execution Site and that there is a site Id.
+ * @parameter name Name of this set of statistics
+ * @parameter hostId id of the host this partition is on
+ * @parameter hostname name of the host this partition is on
+ * @parameter siteId this stat source is associated with
+ * @parameter partitionId id of the partition assigned to this site
+ * @parameter databaseId database this source is associated with.
+ */
+void StatsSource::configure(
+        std::string name,
+        CatalogId hostId,
+        std::string hostname,
+        CatalogId siteId,
+        CatalogId partitionId,
+        CatalogId databaseId) {
+    VOLT_DEBUG("StatsSource::configure...");
+    m_siteId = siteId;
+    m_partitionId = partitionId;
+    m_hostId = hostId;
+    m_hostname = ValueFactory::getStringValue(hostname);
+    std::vector<std::string> columnNames = generateStatsColumnNames();
+
+    std::vector<ValueType> columnTypes;
+    std::vector<int32_t> columnLengths;
+    std::vector<bool> columnAllowNull;
+    populateSchema(columnTypes, columnLengths, columnAllowNull);
+    TupleSchema *schema = TupleSchema::createTupleSchema(columnTypes, columnLengths, columnAllowNull, true);
+
+    for (int ii = 0; ii < columnNames.size(); ii++) {
+        m_columnName2Index[columnNames[ii]] = ii;
+    }
+
+    m_statsTable.reset(TableFactory::getTempTable(databaseId, name, schema, &columnNames[0], NULL));
+    m_statsTuple = m_statsTable->tempTuple();
+}
+
+StatsSource::~StatsSource() {
+    //VOLT_DEBUG("StatsSource::StatsSource...");
+
+    m_hostname.free();
+}
+
+/**
+ * Retrieve the name of this set of statistics
+ * @return Name of statistics
+ */
+std::string StatsSource::getName() {
+    return m_name;
+}
+
+/**
+ * Retrieve table containing the latest statistics available. An updated stat is requested from the derived class by calling
+ * StatsSource::updateStatsTuple
+ * @param interval Return counters since the beginning or since this method was last invoked
+ * @param now Timestamp to return with each row
+ * @return Pointer to a table containing the statistics.
+ */
+Table* StatsSource::getStatsTable(bool interval, int64_t now) {
+    //VOLT_DEBUG("StatsSource::getStatsTable...");
+    getStatsTuple(interval, now);
+    return m_statsTable.get();
+}
+
+/*
+ * Retrieve tuple containing the latest statistics available. An updated stat is requested from the derived class by calling
+ * StatsSource::updateStatsTuple
+ * @param interval Whether to return counters since the beginning or since the last time this was called
+ * @param Timestamp to embed in each row
+ * @return Pointer to a table tuple containing the latest version of the statistics.
+ */
+TableTuple* StatsSource::getStatsTuple(bool interval, int64_t now) {
+    //VOLT_DEBUG("StatsSource::getStatsTuple 1");
+    m_interval = interval;
+    assert (m_statsTable != NULL);
+    //VOLT_DEBUG("StatsSource::getStatsTuple 2");
+    if (m_statsTable == NULL) {
+        return NULL;
+    }
+    //VOLT_DEBUG("StatsSource::getStatsTuple 3");
+    m_statsTuple.setNValue(0, ValueFactory::getBigIntValue(now));
+    m_statsTuple.setNValue(1, ValueFactory::getBigIntValue(m_hostId));
+    m_statsTuple.setNValue(2, m_hostname);
+    m_statsTuple.setNValue(3, ValueFactory::getBigIntValue(m_siteId));
+    m_statsTuple.setNValue(4, ValueFactory::getBigIntValue(m_partitionId));
+    //VOLT_DEBUG("StatsSource::getStatsTuple 4");
+    updateStatsTuple(&m_statsTuple);
+    //VOLT_DEBUG("StatsSource::getStatsTuple 5");
+    m_statsTable->insertTuple(m_statsTuple);
+    //VOLT_DEBUG("StatsSource::getStatsTuple 6");
+    //assert (success);
+    return &m_statsTuple;
+}
+
+/**
+ * Generates the list of column names that will be in the statTable_. Derived classes must override this method and call
+ * the parent class's version to obtain the list of columns contributed by ancestors and then append the columns they will be
+ * contributing to the end of the list.
+ */
+vector<string> StatsSource::generateStatsColumnNames()
+{
+    return StatsSource::generateBaseStatsColumnNames();
+}
+
+/**
+ * String representation of the statistics. Default implementation is to print the stats table.
+ * @return String representation
+ */
+std::string StatsSource::toString() {
+    std::string retString = "";
+    for (int ii = 0; ii < m_statsTable->columnCount(); ii++) {
+        retString += m_statsTable->columnName(ii);
+        retString += "\t";
+    }
+    retString += "\n";
+    retString += m_statsTuple.debug(m_statsTable->name().c_str());
+    return retString;
+}
+
+
+/**
+ * Same pattern as generateStatsColumnNames except the return value is used as an offset into the tuple schema instead of appending to
+ * end of a list.
+ */
+void
+StatsSource::populateSchema(vector<ValueType> &types, vector<int32_t> &columnLengths, vector<bool> &allowNull) {
+    //VOLT_DEBUG("StatsSource::populateSchema...");
+    StatsSource::populateBaseSchema(types, columnLengths, allowNull);
+}
